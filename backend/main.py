@@ -6,6 +6,9 @@ import numpy as np
 import base64
 import mediapipe as mp
 import os
+from ultralytics import YOLO
+
+ear_model = YOLO("models/best.pt")
 
 app = FastAPI()
 
@@ -32,9 +35,13 @@ mp_face = mp.solutions.face_mesh
 # ================= BLEND =================
 def realistic_blend(bg, fg):
     alpha = fg[:, :, 3] / 255.0
-    alpha = np.clip(alpha * 1.2, 0, 1)
+    alpha = np.clip(alpha * 0.9, 0, 1)
+
+    # 🔥 SHADOW (depth)
+    shadow = cv2.GaussianBlur(alpha, (25, 25), 10) * 0.25
 
     for c in range(3):
+        bg[:, :, c] = (1 - shadow) * bg[:, :, c]
         bg[:, :, c] = alpha * fg[:, :, c] + (1 - alpha) * bg[:, :, c]
 
     return bg.astype(np.uint8)
@@ -69,7 +76,10 @@ def get_points(lm, w, h):
 def place_necklace(img, necklace, left, right, chin):
     h, w, _ = img.shape
 
-    width = int(abs(right[0]-left[0]) * 1.6)
+    # 🔥 BETTER WIDTH (jaw based, not face)
+    face_width = abs(right[0] - left[0])
+    width = int(face_width * 1.25)   # reduced from 1.6 → more natural
+
     necklace = cv2.resize(
         necklace,
         (width, int(width * necklace.shape[0] / necklace.shape[1]))
@@ -77,10 +87,28 @@ def place_necklace(img, necklace, left, right, chin):
 
     necklace = enhance_jewellery(necklace)
 
+    # 🔥 CENTER
     cx = (left[0] + right[0]) // 2
-    x = cx - necklace.shape[1] // 2
-    y = chin[1] + 40
 
+    # 🔥 KEY FIX: LOWER POSITION (neck depth)
+    x = cx - necklace.shape[1] // 2
+    y = chin[1] + int(h * 0.015)   # SMALL offset (was 40 → too big)
+
+    # 🔥 ADD GRAVITY DROP (center slightly down)
+    drop = int(necklace.shape[0] * 0.08)
+
+    # create warp (middle goes down slightly)
+    rows, cols = necklace.shape[:2]
+    for i in range(cols):
+        shift = int(drop * (1 - abs((i - cols/2) / (cols/2))))
+        necklace[:, i] = np.roll(necklace[:, i], shift, axis=0)
+
+    # 🔥 SOFT EDGE (important)
+    alpha = necklace[:, :, 3]
+    alpha = cv2.GaussianBlur(alpha, (9, 9), 5)
+    necklace[:, :, 3] = alpha
+
+    # 🔥 CANVAS
     canvas = np.zeros((h, w, 4), dtype=np.uint8)
 
     x = max(0, min(x, w - necklace.shape[1]))
@@ -90,13 +118,32 @@ def place_necklace(img, necklace, left, right, chin):
 
     return canvas
 
+# ================= EARRINGS () =================
+def place_earrings_ai(img, earring):
+    h, w, _ = img.shape
 
-# ================= EARRINGS =================
-def place_earrings(img, earring, lm, w, h):
-    left_ear = lm[234]
-    right_ear = lm[454]
+    results = ear_model(img)[0]
+    canvas = np.zeros((h, w, 4), dtype=np.uint8)
 
-    size = int(w * 0.08)
+    earlobes = []
+
+    for box in results.boxes:
+        cls = int(box.cls[0])
+
+        if cls == 0:  # earlobe
+            x1, y1, x2, y2 = box.xyxy[0]
+
+            cx = int((x1 + x2) / 2)
+
+            # ✅ KEY FIX: use LOWER PART of box (not center)
+            cy = int(y2)   # bottom of earlobe
+
+            earlobes.append((cx, cy))
+
+    # sort left → right
+    earlobes = sorted(earlobes, key=lambda x: x[0])
+
+    size = int(w * 0.07)
 
     ear = cv2.resize(
         earring,
@@ -105,27 +152,22 @@ def place_earrings(img, earring, lm, w, h):
 
     ear = enhance_jewellery(ear)
 
-    canvas = np.zeros((h, w, 4), dtype=np.uint8)
+    for i, (cx, cy) in enumerate(earlobes):
 
-    y_offset = int(h * 0.035)
+        x = cx - ear.shape[1] // 2
 
-    lx = int(left_ear.x * w) - ear.shape[1] // 2
-    ly = int(left_ear.y * h) + y_offset
+        # ✅ DROP slightly BELOW earlobe
+        y = cy - int(ear.shape[0] * 0.1)
 
-    rx = int(right_ear.x * w) - ear.shape[1] // 2
-    ry = int(right_ear.y * h) + y_offset
+        if i == 1:
+            ear_use = cv2.flip(ear, 1)
+        else:
+            ear_use = ear
 
-    if 0 <= lx < w - ear.shape[1] and 0 <= ly < h - ear.shape[0]:
-        canvas[ly:ly+ear.shape[0], lx:lx+ear.shape[1]] = ear
-
-    ear_flip = cv2.flip(ear, 1)
-
-    if 0 <= rx < w - ear_flip.shape[1] and 0 <= ry < h - ear_flip.shape[0]:
-        canvas[ry:ry+ear_flip.shape[0], rx:rx+ear_flip.shape[1]] = ear_flip
+        if 0 <= x < w - ear_use.shape[1] and 0 <= y < h - ear_use.shape[0]:
+            canvas[y:y+ear_use.shape[0], x:x+ear_use.shape[1]] = ear_use
 
     return canvas
-
-
 # ================= API =================
 @app.post("/tryon")
 async def tryon(data: dict):
@@ -158,7 +200,7 @@ async def tryon(data: dict):
                 placed = place_necklace(img, jewellery, left, right, chin)
 
             elif data["type"] == "earring":
-                placed = place_earrings(img, jewellery, lm, w, h)
+                placed = place_earrings_ai(img, jewellery)
 
             else:
                 return {"error": "Invalid type"}

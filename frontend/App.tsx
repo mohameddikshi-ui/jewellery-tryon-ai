@@ -19,6 +19,7 @@ const NECKLACES = [
   { name: "necklace2", img: `${BACKEND_URL}/jewelry/necklace2.png` },
   { name: "necklace3", img: `${BACKEND_URL}/jewelry/necklace3.png` },
   { name: "necklace4", img: `${BACKEND_URL}/jewelry/necklace4.png` },
+  { name: "necklace5", img: `${BACKEND_URL}/jewelry/necklace5.png` },
 ];
 
 const EARRINGS = [

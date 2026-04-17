@@ -73,3 +73,45 @@ yarn-error.log
 !.yarn/releases
 !.yarn/sdks
 !.yarn/versions
+
+# Node
+node_modules/
+frontend/node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# React Native
+android/build/
+android/app/build/
+ios/build/
+.bundle/
+
+# Python
+venv/
+backend/venv/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+**/venv/
+**/__pycache__/
+node_modules/
+backend/uploads/
+backend/outputs/
+*.pyc
+.env
+
+# Generated files
+backend/uploads/
+backend/outputs/
+
+# Environment
+.env
+backend/.env
+
+# System
+.DS_Store
+Thumbs.db
+
